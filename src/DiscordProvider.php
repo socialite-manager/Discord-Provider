@@ -18,6 +18,11 @@ class DiscordProvider extends AbstractProvider
     /**
      * {@inheritdoc}
      */
+    protected $consent = false;
+
+    /**
+     * {@inheritdoc}
+     */
     protected $scopeSeparator = ' ';
 
     /**
@@ -26,8 +31,35 @@ class DiscordProvider extends AbstractProvider
     protected function getAuthUrl(string $state)
     {
         return $this->buildAuthUrlFromBase(
-            'https://discordapp.com/api/oauth2/authorize', $state
+            'https://discord.com/api/oauth2/authorize',
+            $state
         );
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function getCodeFields($state = null)
+    {
+        $fields = parent::getCodeFields($state);
+
+        if (! $this->consent) {
+            $fields['prompt'] = 'none';
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Prompt for consent each time or not.
+     *
+     * @return $this
+     */
+    public function withConsent()
+    {
+        $this->consent = true;
+
+        return $this;
     }
 
     /**
@@ -35,7 +67,17 @@ class DiscordProvider extends AbstractProvider
      */
     protected function getTokenUrl()
     {
-        return 'https://discordapp.com/api/oauth2/token';
+        return 'https://discord.com/api/oauth2/token';
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function getTokenFields(string $code)
+    {
+        $fields = parent::getTokenFields($code);
+        $fields['grant_type'] = 'authorization_code';
+        return $fields;
     }
 
     /**
@@ -44,12 +86,33 @@ class DiscordProvider extends AbstractProvider
     protected function getUserByToken(string $token)
     {
         $response = $this->getHttpClient()->get(
-            'https://discordapp.com/api/users/@me', [
+            'https://discord.com/api/users/@me', [
             'headers' => [
-                'Authorization' => 'Bearer ' . $token,
+                'Accept' => 'application/json',
+				'Authorization' => 'Bearer '.$token,
+                'Client-ID'     => $this->clientId,
             ],
         ]);
         return json_decode($response->getBody()->getContents(), true);
+    }
+
+    /**
+     * @param  array  $user
+     * @return string|null
+     *
+     * @see https://discord.com/developers/docs/reference#image-formatting-cdn-endpoints
+     */
+    protected function formatAvatar(array $user)
+    {
+        if (empty($user['avatar'])) {
+            return null;
+        }
+
+        $isGif = preg_match('/a_.+/m', $user['avatar']) === 1;
+        $extension = $this->getConfig('allow_gif_avatars', true) && $isGif ? 'gif' :
+            $this->getConfig('avatar_default_extension', 'jpg');
+
+        return sprintf('https://cdn.discordapp.com/avatars/%s/%s.%s', $user['id'], $user['avatar'], $extension);
     }
 
     /**
@@ -61,7 +124,7 @@ class DiscordProvider extends AbstractProvider
             'id' => $user['id'],
             'nickname' => sprintf('%s#%s', $user['username'], $user['discriminator']),
             'name' => $user['username'],
-            'email' => $user['email'],
+            'email' => $user['email'] ?? null,
             'avatar' => (is_null($user['avatar'])) ? null : sprintf('https://cdn.discordapp.com/avatars/%s/%s.jpg', $user['id'], $user['avatar']),
         ]);
     }
@@ -69,10 +132,8 @@ class DiscordProvider extends AbstractProvider
     /**
      * {@inheritdoc}
      */
-    protected function getTokenFields(string $code)
+    public static function additionalConfigKeys()
     {
-        return array_merge(parent::getTokenFields($code), [
-            'grant_type' => 'authorization_code',
-        ]);
+        return ['allow_gif_avatars', 'avatar_default_extension'];
     }
 }
